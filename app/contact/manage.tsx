@@ -249,8 +249,24 @@ export default function ManageContactsScreen() {
               No contacts yet
             </Text>
             <Text variant="bodySmall" style={{ color: theme.colors.outline, marginTop: 8, textAlign: 'center', paddingHorizontal: 20 }}>
-              Add contacts manually or import from your phone to start tracking debts
+              Import contacts from your phone or add them manually to start tracking debts
             </Text>
+            <Button
+              mode="contained"
+              icon="contacts"
+              onPress={handleImportRequest}
+              style={{ marginTop: 20 }}
+            >
+              Import from Phone
+            </Button>
+            <Button
+              mode="outlined"
+              icon="account-plus"
+              onPress={openAdd}
+              style={{ marginTop: 10 }}
+            >
+              Add Manually
+            </Button>
           </View>
         }
         contentContainerStyle={{ padding: 16, paddingBottom: 100 }}

@@ -7,6 +7,9 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
 import { useColorScheme, StyleSheet, View, ActivityIndicator } from 'react-native';
 import { store } from '@/store';
+import { useAppSelector, useAppDispatch } from '@/store/hooks';
+import { fetchSettings } from '@/store/slices/settingsSlice';
+import { processRecurring } from '@/store/slices/recurringSlice';
 import { lightTheme, darkTheme } from '@/theme';
 import { db } from '@/db/client';
 import { seedDatabase } from '@/db/seed';
@@ -109,6 +112,30 @@ function InitDatabase({ children }: { children: React.ReactNode }) {
         )
       `);
 
+      await database.run(sql`
+        CREATE TABLE IF NOT EXISTS recurring_transactions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          type TEXT NOT NULL CHECK(type IN ('income', 'expense')),
+          amount REAL NOT NULL,
+          category_id INTEGER REFERENCES categories(id),
+          description TEXT,
+          frequency TEXT NOT NULL CHECK(frequency IN ('daily', 'weekly', 'monthly', 'custom')),
+          custom_interval_days INTEGER,
+          start_date TEXT NOT NULL,
+          end_date TEXT,
+          last_generated_date TEXT,
+          is_active INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `);
+
+      // Migration: add recurring_id column to transactions
+      try {
+        await database.run(sql`ALTER TABLE transactions ADD COLUMN recurring_id INTEGER`);
+      } catch (_) {
+        // Column already exists — safe to ignore
+      }
+
       await seedDatabase();
       setReady(true);
     }
@@ -127,17 +154,59 @@ function InitDatabase({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-export default function RootLayout() {
-  const colorScheme = useColorScheme();
-  const theme = colorScheme === 'dark' ? darkTheme : lightTheme;
+function RecurringProcessor({ children }: { children: React.ReactNode }) {
+  const dispatch = useAppDispatch();
 
+  useEffect(() => {
+    dispatch(processRecurring());
+  }, [dispatch]);
+
+  return <>{children}</>;
+}
+
+function ThemedApp({ children }: { children: React.ReactNode }) {
+  const dispatch = useAppDispatch();
+  const colorScheme = useColorScheme();
+  const settings = useAppSelector((s) => s.settings.data);
+
+  useEffect(() => {
+    dispatch(fetchSettings());
+  }, [dispatch]);
+
+  // Determine which theme to use based on user settings
+  const getTheme = () => {
+    if (!settings) return lightTheme; // Default while loading
+    
+    switch (settings.theme) {
+      case 'light':
+        return lightTheme;
+      case 'dark':
+        return darkTheme;
+      case 'system':
+      default:
+        return colorScheme === 'dark' ? darkTheme : lightTheme;
+    }
+  };
+
+  const theme = getTheme();
+  const isDark = theme === darkTheme;
+
+  return (
+    <PaperProvider theme={theme}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+      {children}
+    </PaperProvider>
+  );
+}
+
+export default function RootLayout() {
   return (
     <GestureHandlerRootView style={styles.flex}>
       <SafeAreaProvider>
         <ReduxProvider store={store}>
-          <PaperProvider theme={theme}>
+          <ThemedApp>
             <InitDatabase>
-              <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+              <RecurringProcessor>
               <Stack screenOptions={{ headerShown: false }}>
                 <Stack.Screen name="(tabs)" />
                 <Stack.Screen
@@ -165,8 +234,9 @@ export default function RootLayout() {
                   options={{ headerShown: true, title: 'Manage Contacts' }}
                 />
               </Stack>
+              </RecurringProcessor>
             </InitDatabase>
-          </PaperProvider>
+          </ThemedApp>
         </ReduxProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

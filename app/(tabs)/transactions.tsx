@@ -28,11 +28,12 @@ import {
   deleteTransaction,
 } from '@/store/slices/transactionsSlice';
 import { fetchCategories } from '@/store/slices/categoriesSlice';
+import { addRecurringTransaction, processRecurring } from '@/store/slices/recurringSlice';
 import { formatCurrency } from '@/utils/currency';
 import { formatSectionDate } from '@/utils/dateHelpers';
 import TransactionForm from '@/components/TransactionForm';
 import EmptyState from '@/components/EmptyState';
-import type { NewTransaction, Transaction } from '@/db/schema';
+import type { NewTransaction, NewRecurringTransaction, Transaction } from '@/db/schema';
 
 type FilterType = 'all' | 'income' | 'expense';
 
@@ -116,6 +117,14 @@ export default function TransactionsScreen() {
     setShowAddModal(false);
   };
 
+  const handleAddRecurring = async (data: NewRecurringTransaction) => {
+    await dispatch(addRecurringTransaction(data));
+    // Process immediately so the first transaction appears right away
+    await dispatch(processRecurring());
+    await dispatch(fetchTransactions());
+    setShowAddModal(false);
+  };
+
   const renderTransaction = ({ item }: { item: Transaction }) => {
     const cat = getCategory(item.categoryId);
     return (
@@ -138,9 +147,14 @@ export default function TransactionsScreen() {
             />
           </View>
           <View style={styles.txnInfo}>
-            <Text variant="bodyMedium" style={{ fontWeight: '500' }}>
-              {cat?.name ?? 'Unknown'}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Text variant="bodyMedium" style={{ fontWeight: '500' }}>
+                {cat?.name ?? 'Unknown'}
+              </Text>
+              {item.recurringId && (
+                <MaterialCommunityIcons name="repeat" size={14} color={theme.colors.outline} />
+              )}
+            </View>
             {item.description && (
               <Text
                 variant="bodySmall"
@@ -291,6 +305,7 @@ export default function TransactionsScreen() {
               <TransactionForm
                 initialData={lastTransactionDate ? { date: lastTransactionDate } : undefined}
                 onSubmit={handleAdd}
+                onRecurringSubmit={handleAddRecurring}
                 onCancel={() => setShowAddModal(false)}
               />
             </View>

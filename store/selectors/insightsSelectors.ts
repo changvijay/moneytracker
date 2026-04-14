@@ -16,6 +16,7 @@ const selectTransactions = (state: RootState) => state.transactions.items;
 const selectCategories = (state: RootState) => state.categories.items;
 const selectDebts = (state: RootState) => state.debts.items;
 const selectSettings = (state: RootState) => state.settings.data;
+const selectContacts = (state: RootState) => state.contacts.items;
 
 // Current month transactions
 export const selectCurrentMonthTransactions = createSelector(
@@ -210,4 +211,88 @@ export const selectSpendingVelocity = createSelector(
       pace: totals.income > 0 ? (projectedExpenses / totals.income) * 100 : 0,
     };
   }
+);
+
+// Frequent contacts — contacts sorted by number of associated debts (descending)
+export const selectFrequentContacts = createSelector(
+  [selectDebts, selectContacts],
+  (debts, contacts) => {
+    const countMap = new Map<number, number>();
+    debts.forEach((d) => {
+      countMap.set(d.contactId, (countMap.get(d.contactId) ?? 0) + 1);
+    });
+
+    return [...contacts].sort((a, b) => {
+      const cntA = countMap.get(a.id) ?? 0;
+      const cntB = countMap.get(b.id) ?? 0;
+      return cntB - cntA;
+    });
+  }
+);
+
+// Grouped debts by contact for a given type
+export interface DebtGroup {
+  contactId: number;
+  contactName: string;
+  type: 'lent' | 'borrowed';
+  totalAmount: number;
+  totalRemaining: number;
+  totalPaid: number;
+  debtCount: number;
+  activeCount: number;
+  latestDate: string;
+  hasSettled: boolean;
+  allSettled: boolean;
+}
+
+const selectPayments = (state: RootState) => state.debts.payments;
+
+export const selectGroupedDebts = createSelector(
+  [selectDebts, selectContacts, selectPayments],
+  (debts, contacts, payments) => {
+    const groups = new Map<string, DebtGroup>();
+
+    debts.forEach((d) => {
+      const key = `${d.type}-${d.contactId}`;
+      const contact = contacts.find((c) => c.id === d.contactId);
+
+      if (!groups.has(key)) {
+        groups.set(key, {
+          contactId: d.contactId,
+          contactName: contact?.name ?? 'Unknown',
+          type: d.type as 'lent' | 'borrowed',
+          totalAmount: 0,
+          totalRemaining: 0,
+          totalPaid: 0,
+          debtCount: 0,
+          activeCount: 0,
+          latestDate: d.createdAt,
+          hasSettled: false,
+          allSettled: true,
+        });
+      }
+
+      const group = groups.get(key)!;
+      group.totalAmount += d.amount;
+      group.totalRemaining += d.remainingAmount;
+      group.totalPaid += d.amount - d.remainingAmount;
+      group.debtCount += 1;
+      if (d.status !== 'settled') group.activeCount += 1;
+      if (d.status === 'settled') group.hasSettled = true;
+      if (d.status !== 'settled') group.allSettled = false;
+      if (d.createdAt > group.latestDate) group.latestDate = d.createdAt;
+    });
+
+    return Array.from(groups.values()).sort(
+      (a, b) => b.latestDate.localeCompare(a.latestDate)
+    );
+  }
+);
+
+export const selectGroupedDebtsByType = createSelector(
+  [selectGroupedDebts],
+  (groups) => ({
+    lent: groups.filter((g) => g.type === 'lent'),
+    borrowed: groups.filter((g) => g.type === 'borrowed'),
+  })
 );

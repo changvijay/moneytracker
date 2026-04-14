@@ -23,10 +23,11 @@ import { useRouter } from 'expo-router';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { fetchCategories, addCategory } from '@/store/slices/categoriesSlice';
 import { fetchSettings } from '@/store/slices/settingsSlice';
-import type { NewTransaction, Category } from '@/db/schema';
+import type { NewTransaction, NewRecurringTransaction, Category } from '@/db/schema';
 import { todayString } from '@/utils/dateHelpers';
-import { format, addDays, parseISO, isAfter, startOfDay } from 'date-fns';
+import { format, addDays, parseISO, isAfter, startOfDay, addMonths } from 'date-fns';
 import { DEFAULT_CATEGORIES } from '@/constants/defaultCategories';
+import { getFrequencyLabel } from '@/services/recurringProcessor';
 
 let DateTimePicker: any = null;
 try {
@@ -38,6 +39,7 @@ try {
 interface TransactionFormProps {
   initialData?: Partial<NewTransaction>;
   onSubmit: (data: NewTransaction) => void;
+  onRecurringSubmit?: (data: NewRecurringTransaction) => void;
   onCancel: () => void;
   loading?: boolean;
 }
@@ -64,6 +66,7 @@ const TYPE_CONFIG = {
 export default function TransactionForm({
   initialData,
   onSubmit,
+  onRecurringSubmit,
   onCancel,
   loading,
 }: TransactionFormProps) {
@@ -86,6 +89,14 @@ export default function TransactionForm({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [tempDate, setTempDate] = useState(new Date());
+
+  // Recurring transaction state
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [frequency, setFrequency] = useState<'daily' | 'weekly' | 'monthly' | 'custom'>('monthly');
+  const [customIntervalDays, setCustomIntervalDays] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [showEndDatePicker, setShowEndDatePicker] = useState(false);
+  const [tempEndDate, setTempEndDate] = useState(addMonths(new Date(), 3));
 
   const slideAnim = useRef(new Animated.Value(type === 'expense' ? 0 : 1)).current;
   const amountScale = useRef(new Animated.Value(1)).current;
@@ -205,19 +216,45 @@ export default function TransactionForm({
     if (!amount || isNaN(num) || num <= 0) errs.amount = 'Enter a valid amount greater than 0';
     if (!categoryId && filteredCategories.length > 0) errs.category = 'Select a category';
     if (!date) errs.date = 'Select a date';
+    if (isRecurring) {
+      if (frequency === 'custom') {
+        const interval = parseInt(customIntervalDays, 10);
+        if (!customIntervalDays || isNaN(interval) || interval < 1)
+          errs.customInterval = 'Enter a valid interval (1 or more days)';
+      }
+      if (endDate && isAfter(parseISO(date), parseISO(endDate))) {
+        errs.endDate = 'End date must be after start date';
+      }
+    }
     setErrors(errs);
     return Object.keys(errs).length === 0;
   };
 
   const handleSubmit = () => {
     if (!validate()) return;
-    onSubmit({
-      type,
-      amount: parseFloat(amount),
-      categoryId: categoryId!,
-      description: description.trim() || undefined,
-      date,
-    });
+
+    if (isRecurring && onRecurringSubmit) {
+      onRecurringSubmit({
+        type,
+        amount: parseFloat(amount),
+        categoryId: categoryId!,
+        description: description.trim() || undefined,
+        frequency,
+        customIntervalDays:
+          frequency === 'custom' ? parseInt(customIntervalDays, 10) : undefined,
+        startDate: date,
+        endDate: endDate || undefined,
+        isActive: true,
+      });
+    } else {
+      onSubmit({
+        type,
+        amount: parseFloat(amount),
+        categoryId: categoryId!,
+        description: description.trim() || undefined,
+        date,
+      });
+    }
   };
 
   const cfg = TYPE_CONFIG[type];
@@ -460,6 +497,155 @@ export default function TransactionForm({
           )}
         </View>
 
+        {/* ── Recurring ── */}
+        {onRecurringSubmit && (
+          <View style={styles.card}>
+            <View style={styles.cardLabelRow}>
+              <MaterialCommunityIcons name="repeat" size={14} color="#9CA3AF" />
+              <Text style={styles.cardLabel}>RECURRING <Text style={styles.optionalTag}>· optional</Text></Text>
+            </View>
+
+            {/* Toggle */}
+            <TouchableOpacity
+              style={styles.recurringToggleRow}
+              onPress={() => setIsRecurring(!isRecurring)}
+              activeOpacity={0.8}
+            >
+              <View style={styles.recurringToggleInfo}>
+                <Text style={styles.recurringToggleLabel}>Repeat this transaction</Text>
+                <Text style={styles.recurringToggleSub}>
+                  {isRecurring ? getFrequencyLabel(frequency, frequency === 'custom' ? parseInt(customIntervalDays, 10) || undefined : undefined) : 'Off'}
+                </Text>
+              </View>
+              <View style={[styles.recurringSwitch, isRecurring && { backgroundColor: cfg.color }]}>
+                <View style={[styles.recurringSwitchThumb, isRecurring && styles.recurringSwitchThumbActive]} />
+              </View>
+            </TouchableOpacity>
+
+            {isRecurring && (
+              <View style={styles.recurringOptions}>
+                {/* Frequency Chips */}
+                <Text style={styles.recurringSubLabel}>Frequency</Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.freqRow}
+                >
+                  {(['daily', 'weekly', 'monthly', 'custom'] as const).map((f) => {
+                    const active = frequency === f;
+                    return (
+                      <TouchableOpacity
+                        key={f}
+                        style={[
+                          styles.freqChip,
+                          active && { backgroundColor: cfg.color, borderColor: cfg.color },
+                        ]}
+                        onPress={() => setFrequency(f)}
+                        activeOpacity={0.8}
+                      >
+                        <MaterialCommunityIcons
+                          name={
+                            f === 'daily' ? 'calendar-today' :
+                            f === 'weekly' ? 'calendar-week' :
+                            f === 'monthly' ? 'calendar-month' :
+                            'calendar-edit'
+                          }
+                          size={14}
+                          color={active ? '#fff' : '#6B7280'}
+                        />
+                        <Text style={[styles.freqChipText, active && { color: '#fff' }]}>
+                          {f.charAt(0).toUpperCase() + f.slice(1)}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+
+                {/* Custom Interval Input */}
+                {frequency === 'custom' && (
+                  <View style={styles.customIntervalRow}>
+                    <Text style={styles.recurringSubLabel}>Repeat every</Text>
+                    <View style={styles.customIntervalInput}>
+                      <TextInput
+                        value={customIntervalDays}
+                        onChangeText={setCustomIntervalDays}
+                        keyboardType="number-pad"
+                        mode="flat"
+                        placeholder="7"
+                        placeholderTextColor="#D1D5DB"
+                        style={styles.intervalTextInput}
+                        underlineColor="transparent"
+                        activeUnderlineColor={cfg.color}
+                        contentStyle={styles.intervalContent}
+                      />
+                      <Text style={styles.intervalUnit}>days</Text>
+                    </View>
+                    {errors.customInterval && (
+                      <View style={styles.errorRow}>
+                        <MaterialCommunityIcons name="alert-circle-outline" size={13} color="#E53935" />
+                        <Text style={styles.errorTxt}>{errors.customInterval}</Text>
+                      </View>
+                    )}
+                  </View>
+                )}
+
+                {/* End Date */}
+                <View style={styles.endDateSection}>
+                  <Text style={styles.recurringSubLabel}>End date <Text style={styles.optionalTag}>· optional</Text></Text>
+                  {endDate ? (
+                    <View style={styles.endDateRow}>
+                      <TouchableOpacity
+                        style={styles.endDateValue}
+                        onPress={() => {
+                          setTempEndDate(parseISO(endDate));
+                          setShowEndDatePicker(true);
+                        }}
+                        activeOpacity={0.8}
+                      >
+                        <MaterialCommunityIcons name="calendar-end" size={16} color={cfg.color} />
+                        <Text style={[styles.endDateText, { color: cfg.color }]}>
+                          {format(parseISO(endDate), 'MMM d, yyyy')}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => setEndDate('')} style={styles.clearEndDate}>
+                        <MaterialCommunityIcons name="close-circle" size={18} color="#9CA3AF" />
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.setEndDateBtn}
+                      onPress={() => {
+                        setTempEndDate(addMonths(parseISO(date), 3));
+                        setShowEndDatePicker(true);
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <MaterialCommunityIcons name="calendar-plus" size={16} color="#6B7280" />
+                      <Text style={styles.setEndDateText}>Set end date</Text>
+                    </TouchableOpacity>
+                  )}
+                  {errors.endDate && (
+                    <View style={styles.errorRow}>
+                      <MaterialCommunityIcons name="alert-circle-outline" size={13} color="#E53935" />
+                      <Text style={styles.errorTxt}>{errors.endDate}</Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* Summary */}
+                <View style={styles.recurringSummary}>
+                  <MaterialCommunityIcons name="information-outline" size={14} color="#9CA3AF" />
+                  <Text style={styles.recurringSummaryText}>
+                    Starting {format(parseISO(date), 'MMM d')}, repeats{' '}
+                    {getFrequencyLabel(frequency, frequency === 'custom' ? parseInt(customIntervalDays, 10) || undefined : undefined).toLowerCase()}
+                    {endDate ? ` until ${format(parseISO(endDate), 'MMM d, yyyy')}` : ' indefinitely'}
+                  </Text>
+                </View>
+              </View>
+            )}
+          </View>
+        )}
+
         {/* ── Note ── */}
         <View style={styles.card}>
           <View style={styles.cardLabelRow}>
@@ -609,6 +795,106 @@ export default function TransactionForm({
               <TouchableOpacity
                 style={[styles.calConfirmBtn, { backgroundColor: cfg.color }]}
                 onPress={confirmDateChange}
+              >
+                <Text style={styles.calConfirmTxt}>Confirm</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </Modal>
+      </Portal>
+
+      {/* ── End Date Modal (for recurring) ── */}
+      <Portal>
+        <Modal
+          visible={showEndDatePicker}
+          onDismiss={() => setShowEndDatePicker(false)}
+          contentContainerStyle={styles.calendarModal}
+        >
+          <View style={styles.calendarHeader}>
+            <Text style={styles.calendarTitle}>End Date</Text>
+            <IconButton icon="close" onPress={() => setShowEndDatePicker(false)} iconColor="#9CA3AF" size={18} />
+          </View>
+          <View style={styles.calendarBody}>
+            <View style={styles.calendarNav}>
+              <TouchableOpacity
+                style={styles.calNavBtn}
+                onPress={() => setTempEndDate(addDays(tempEndDate, -30))}
+                activeOpacity={0.7}
+              >
+                <MaterialCommunityIcons name="chevron-double-left" size={18} color="#374151" />
+                <Text style={styles.calNavTxt}>−30</Text>
+              </TouchableOpacity>
+              <View style={styles.calDateDisplay}>
+                <Text style={styles.calDateMain}>{format(tempEndDate, 'MMM d, yyyy')}</Text>
+                <Text style={styles.calDateSub}>{format(tempEndDate, 'EEEE')}</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.calNavBtn}
+                onPress={() => setTempEndDate(addDays(tempEndDate, 30))}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.calNavTxt}>+30</Text>
+                <MaterialCommunityIcons name="chevron-double-right" size={18} color="#374151" />
+              </TouchableOpacity>
+            </View>
+
+            {DateTimePicker ? (
+              <DateTimePicker
+                value={tempEndDate}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'compact' : 'default'}
+                onChange={(_: any, selectedDate: Date | undefined) => {
+                  if (selectedDate) {
+                    setTempEndDate(selectedDate);
+                    if (Platform.OS === 'android') {
+                      setEndDate(format(selectedDate, 'yyyy-MM-dd'));
+                      setShowEndDatePicker(false);
+                    }
+                  }
+                }}
+                minimumDate={parseISO(date)}
+                style={styles.datePickerComponent}
+              />
+            ) : (
+              <View style={styles.fallbackPicker}>
+                <Text style={styles.fallbackTxt}>Use ±30 day buttons to set end date</Text>
+              </View>
+            )}
+
+            <View style={styles.calQuickRow}>
+              {[
+                { label: '3 months', months: 3 },
+                { label: '6 months', months: 6 },
+                { label: '1 year', months: 12 },
+              ].map(({ label, months }) => (
+                <TouchableOpacity
+                  key={label}
+                  style={styles.calQuickChip}
+                  onPress={() => {
+                    const d = addMonths(parseISO(date), months);
+                    setTempEndDate(d);
+                    setEndDate(format(d, 'yyyy-MM-dd'));
+                    setShowEndDatePicker(false);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.calQuickTxt}>{label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          {Platform.OS === 'ios' && DateTimePicker && (
+            <View style={styles.calActions}>
+              <TouchableOpacity style={styles.calCancelBtn} onPress={() => setShowEndDatePicker(false)}>
+                <Text style={styles.calCancelTxt}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.calConfirmBtn, { backgroundColor: cfg.color }]}
+                onPress={() => {
+                  setEndDate(format(tempEndDate, 'yyyy-MM-dd'));
+                  setShowEndDatePicker(false);
+                }}
               >
                 <Text style={styles.calConfirmTxt}>Confirm</Text>
               </TouchableOpacity>
@@ -1084,5 +1370,160 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#fff',
+  },
+
+  /* ── Recurring ── */
+  recurringToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  recurringToggleInfo: {
+    flex: 1,
+  },
+  recurringToggleLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  recurringToggleSub: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    marginTop: 1,
+  },
+  recurringSwitch: {
+    width: 44,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#E5E7EB',
+    padding: 2,
+    justifyContent: 'center',
+  },
+  recurringSwitchThumb: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  recurringSwitchThumbActive: {
+    alignSelf: 'flex-end',
+  },
+  recurringOptions: {
+    marginTop: 12,
+    gap: 12,
+  },
+  recurringSubLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#9CA3AF',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  freqRow: {
+    gap: 8,
+    paddingVertical: 2,
+  },
+  freqChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#F9FAFB',
+  },
+  freqChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  customIntervalRow: {
+    gap: 4,
+  },
+  customIntervalInput: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  intervalTextInput: {
+    backgroundColor: '#F9FAFB',
+    fontSize: 16,
+    fontWeight: '600',
+    width: 80,
+    borderRadius: 10,
+  },
+  intervalContent: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  intervalUnit: {
+    fontSize: 14,
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  endDateSection: {
+    gap: 4,
+  },
+  endDateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  endDateValue: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  endDateText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  clearEndDate: {
+    padding: 4,
+  },
+  setEndDateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 10,
+    alignSelf: 'flex-start',
+  },
+  setEndDateText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  recurringSummary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#F0F9FF',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+  },
+  recurringSummaryText: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '500',
+    flex: 1,
   },
 });

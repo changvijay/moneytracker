@@ -23,6 +23,7 @@ export const transactions = sqliteTable('transactions', {
   categoryId: integer('category_id').references(() => categories.id),
   description: text('description'),
   date: text('date').notNull(),
+  recurringId: integer('recurring_id'),
   createdAt: text('created_at')
     .notNull()
     .$defaultFn(() => new Date().toISOString()),
@@ -70,6 +71,26 @@ export const debtPayments = sqliteTable('debt_payments', {
   notes: text('notes'),
 });
 
+// ─── Recurring Transactions ────────────────────────────────
+export const recurringTransactions = sqliteTable('recurring_transactions', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  type: text('type', { enum: ['income', 'expense'] }).notNull(),
+  amount: real('amount').notNull(),
+  categoryId: integer('category_id').references(() => categories.id),
+  description: text('description'),
+  frequency: text('frequency', {
+    enum: ['daily', 'weekly', 'monthly', 'custom'],
+  }).notNull(),
+  customIntervalDays: integer('custom_interval_days'),
+  startDate: text('start_date').notNull(),
+  endDate: text('end_date'),
+  lastGeneratedDate: text('last_generated_date'),
+  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  createdAt: text('created_at')
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+
 // ─── Settings (Singleton) ─────────────────────────────────
 export const settings = sqliteTable('settings', {
   id: integer('id').primaryKey(),
@@ -100,3 +121,5 @@ export type NewDebt = typeof debts.$inferInsert;
 export type DebtPayment = typeof debtPayments.$inferSelect;
 export type NewDebtPayment = typeof debtPayments.$inferInsert;
 export type Settings = typeof settings.$inferSelect;
+export type RecurringTransaction = typeof recurringTransactions.$inferSelect;
+export type NewRecurringTransaction = typeof recurringTransactions.$inferInsert;

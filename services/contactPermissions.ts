@@ -218,6 +218,50 @@ class ContactPermissionsService {
   resetPermissionCache() {
     this.permissionStatus = null;
   }
+
+  /**
+   * Search phone contacts dynamically by query string.
+   * Returns a small set of matching contacts without loading the full address book.
+   */
+  async searchPhoneContacts(query: string, limit: number = 20): Promise<PhoneContact[]> {
+    if (!query || query.trim().length < 2) return [];
+
+    const permission = await this.checkContactPermission();
+    if (!permission.granted) {
+      throw new Error('PERMISSION_REQUIRED');
+    }
+
+    try {
+      const { data } = await Contacts.getContactsAsync({
+        fields: [
+          Contacts.Fields.Name,
+          Contacts.Fields.PhoneNumbers,
+          Contacts.Fields.Emails,
+        ],
+        name: query.trim(),
+        sort: Contacts.SortTypes.FirstName,
+        pageSize: limit,
+      });
+
+      return data
+        .filter(c => c.name && c.name.trim())
+        .map(c => ({
+          id: c.id,
+          name: c.name || 'Unknown',
+          phoneNumbers: c.phoneNumbers?.map(p => ({
+            number: p.number || '',
+            label: p.label || undefined,
+          })),
+          emails: c.emails?.map(e => ({
+            email: e.email || '',
+            label: e.label || undefined,
+          })),
+        }));
+    } catch (error) {
+      console.error('Phone contact search failed:', error);
+      return [];
+    }
+  }
 }
 
 export const contactPermissions = new ContactPermissionsService();

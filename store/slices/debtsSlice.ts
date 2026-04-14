@@ -2,7 +2,7 @@ import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { db } from '@/db/client';
 import { debts, debtPayments } from '@/db/schema';
 import type { Debt, NewDebt, DebtPayment, NewDebtPayment } from '@/db/schema';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, inArray } from 'drizzle-orm';
 
 interface DebtsState {
   items: Debt[];
@@ -58,6 +58,18 @@ export const fetchPaymentsForDebt = createAsyncThunk(
       .select()
       .from(debtPayments)
       .where(eq(debtPayments.debtId, debtId))
+      .orderBy(desc(debtPayments.date));
+  }
+);
+
+export const fetchPaymentsForDebts = createAsyncThunk(
+  'debts/fetchPaymentsForDebts',
+  async (debtIds: number[]) => {
+    if (debtIds.length === 0) return [];
+    return await db
+      .select()
+      .from(debtPayments)
+      .where(inArray(debtPayments.debtId, debtIds))
       .orderBy(desc(debtPayments.date));
   }
 );
@@ -132,6 +144,13 @@ const debtsSlice = createSlice({
       })
       .addCase(fetchPaymentsForDebt.fulfilled, (state, action) => {
         // Replace payments for this debt
+        const debtIds = new Set(action.payload.map((p) => p.debtId));
+        state.payments = [
+          ...state.payments.filter((p) => !debtIds.has(p.debtId)),
+          ...action.payload,
+        ];
+      })
+      .addCase(fetchPaymentsForDebts.fulfilled, (state, action) => {
         const debtIds = new Set(action.payload.map((p) => p.debtId));
         state.payments = [
           ...state.payments.filter((p) => !debtIds.has(p.debtId)),

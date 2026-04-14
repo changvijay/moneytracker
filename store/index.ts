@@ -4,6 +4,7 @@ import transactionsReducer from './slices/transactionsSlice';
 import debtsReducer from './slices/debtsSlice';
 import contactsReducer from './slices/contactsSlice';
 import settingsReducer from './slices/settingsSlice';
+import recurringReducer from './slices/recurringSlice';
 
 export const store = configureStore({
   reducer: {
@@ -12,6 +13,7 @@ export const store = configureStore({
     debts: debtsReducer,
     contacts: contactsReducer,
     settings: settingsReducer,
+    recurring: recurringReducer,
   },
 });
 

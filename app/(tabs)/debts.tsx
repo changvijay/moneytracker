@@ -1,10 +1,9 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   StyleSheet,
   FlatList,
   TouchableOpacity,
-  Alert,
 } from 'react-native';
 import {
   Text,
@@ -13,20 +12,21 @@ import {
   SegmentedButtons,
   Card,
   Badge,
-  Divider,
 } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { fetchDebts, deleteDebt } from '@/store/slices/debtsSlice';
+import { fetchDebts } from '@/store/slices/debtsSlice';
 import { fetchContacts } from '@/store/slices/contactsSlice';
 import { formatCurrency } from '@/utils/currency';
-import { formatTransactionDate } from '@/utils/dateHelpers';
-import { selectDebtSummary } from '@/store/selectors/insightsSelectors';
+import {
+  selectDebtSummary,
+  selectGroupedDebtsByType,
+  DebtGroup,
+} from '@/store/selectors/insightsSelectors';
 import EmptyState from '@/components/EmptyState';
-import type { Debt } from '@/db/schema';
 
 export default function DebtsScreen() {
   const theme = useTheme() as any;
@@ -36,10 +36,10 @@ export default function DebtsScreen() {
 
   const [tab, setTab] = useState<'lent' | 'borrowed'>('lent');
 
-  const allDebts = useAppSelector((s) => s.debts.items);
   const contacts = useAppSelector((s) => s.contacts.items);
   const settings = useAppSelector((s) => s.settings.data);
   const debtSummary = useAppSelector(selectDebtSummary);
+  const groupedDebts = useAppSelector(selectGroupedDebtsByType);
   const symbol = settings?.currencySymbol ?? '$';
 
   useEffect(() => {
@@ -47,79 +47,76 @@ export default function DebtsScreen() {
     dispatch(fetchContacts());
   }, [dispatch]);
 
-  const filteredDebts = useMemo(
-    () => allDebts.filter((d) => d.type === tab),
-    [allDebts, tab]
-  );
+  const data = tab === 'lent' ? groupedDebts.lent : groupedDebts.borrowed;
 
-  const getContact = (contactId: number) =>
-    contacts.find((c) => c.id === contactId);
+  const hasContacts = contacts.length > 0;
 
-  const statusColor = (status: string) => {
-    switch (status) {
-      case 'settled':
-        return theme.custom.income;
-      case 'partial':
-        return theme.custom.warning;
-      default:
-        return theme.colors.outline;
-    }
-  };
-
-  const handleDelete = (id: number) => {
-    Alert.alert('Delete Debt', 'This will also delete all payment records. Continue?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => dispatch(deleteDebt(id)),
-      },
-    ]);
-  };
-
-  const renderDebt = ({ item }: { item: Debt }) => {
-    const contact = getContact(item.contactId);
+  const renderGroup = ({ item }: { item: DebtGroup }) => {
     const progress =
-      item.amount > 0
-        ? ((item.amount - item.remainingAmount) / item.amount) * 100
+      item.totalAmount > 0
+        ? (item.totalPaid / item.totalAmount) * 100
         : 0;
 
+    const statusLabel = item.allSettled
+      ? 'SETTLED'
+      : item.activeCount < item.debtCount
+      ? 'PARTIAL'
+      : 'ACTIVE';
+
+    const statusColor = item.allSettled
+      ? theme.custom.income
+      : item.activeCount < item.debtCount
+      ? theme.custom.warning
+      : theme.colors.outline;
+
+    const typeColor =
+      tab === 'lent' ? theme.custom.lent : theme.custom.borrowed;
+
     return (
-      <TouchableOpacity onPress={() => router.push(`/debt/${item.id}`)}>
+      <TouchableOpacity
+        onPress={() =>
+          router.push(`/debt/group/${item.contactId}?type=${item.type}`)
+        }
+      >
         <Card style={styles.debtCard}>
           <Card.Content>
             <View style={styles.debtHeader}>
               <View style={styles.debtInfo}>
-                <Text variant="titleMedium" style={{ fontWeight: '600' }}>
-                  {contact?.name ?? 'Unknown'}
-                </Text>
-                {item.description && (
-                  <Text
-                    variant="bodySmall"
-                    style={{ color: theme.colors.outline }}
-                    numberOfLines={1}
-                  >
-                    {item.description}
+                <View style={styles.nameRow}>
+                  <MaterialCommunityIcons
+                    name="account-circle"
+                    size={24}
+                    color={typeColor}
+                    style={{ marginRight: 8 }}
+                  />
+                  <Text variant="titleMedium" style={{ fontWeight: '600', flex: 1 }}>
+                    {item.contactName}
                   </Text>
-                )}
+                </View>
+                <Text
+                  variant="bodySmall"
+                  style={{ color: theme.colors.outline, marginTop: 2 }}
+                >
+                  {item.debtCount} transaction{item.debtCount !== 1 ? 's' : ''}
+                </Text>
               </View>
               <View style={{ alignItems: 'flex-end' }}>
                 <Text
                   variant="titleMedium"
                   style={{
                     fontWeight: '700',
-                    color: tab === 'lent' ? theme.custom.lent : theme.custom.borrowed,
+                    color: typeColor,
                   }}
                 >
-                  {formatCurrency(item.remainingAmount, symbol)}
+                  {formatCurrency(item.totalRemaining, symbol)}
                 </Text>
                 <Badge
                   style={[
                     styles.statusBadge,
-                    { backgroundColor: statusColor(item.status) + '20' },
+                    { backgroundColor: statusColor + '20' },
                   ]}
                 >
-                  {item.status.toUpperCase()}
+                  {statusLabel}
                 </Badge>
               </View>
             </View>
@@ -131,22 +128,21 @@ export default function DebtsScreen() {
                   styles.progressFill,
                   {
                     width: `${Math.min(progress, 100)}%`,
-                    backgroundColor:
-                      tab === 'lent' ? theme.custom.lent : theme.custom.borrowed,
+                    backgroundColor: typeColor,
                   },
                 ]}
               />
             </View>
             <View style={styles.debtFooter}>
               <Text variant="labelSmall" style={{ color: theme.colors.outline }}>
-                {formatCurrency(item.amount - item.remainingAmount, symbol)} of{' '}
-                {formatCurrency(item.amount, symbol)} paid
+                {formatCurrency(item.totalPaid, symbol)} of{' '}
+                {formatCurrency(item.totalAmount, symbol)} paid
               </Text>
-              {item.dueDate && (
-                <Text variant="labelSmall" style={{ color: theme.colors.outline }}>
-                  Due: {formatTransactionDate(item.dueDate)}
-                </Text>
-              )}
+              <MaterialCommunityIcons
+                name="chevron-right"
+                size={18}
+                color={theme.colors.outline}
+              />
             </View>
           </Card.Content>
         </Card>
@@ -163,18 +159,34 @@ export default function DebtsScreen() {
 
         {/* Summary cards */}
         <View style={styles.summaryRow}>
-          <Card style={[styles.summaryCard, { borderLeftColor: theme.custom.lent, borderLeftWidth: 3 }]}>
+          <Card
+            style={[
+              styles.summaryCard,
+              { borderLeftColor: theme.custom.lent, borderLeftWidth: 3 },
+            ]}
+          >
             <Card.Content style={styles.summaryContent}>
               <Text variant="labelSmall">Total Lent</Text>
-              <Text variant="titleMedium" style={{ fontWeight: '700', color: theme.custom.lent }}>
+              <Text
+                variant="titleMedium"
+                style={{ fontWeight: '700', color: theme.custom.lent }}
+              >
                 {formatCurrency(debtSummary.totalLent, symbol)}
               </Text>
             </Card.Content>
           </Card>
-          <Card style={[styles.summaryCard, { borderLeftColor: theme.custom.borrowed, borderLeftWidth: 3 }]}>
+          <Card
+            style={[
+              styles.summaryCard,
+              { borderLeftColor: theme.custom.borrowed, borderLeftWidth: 3 },
+            ]}
+          >
             <Card.Content style={styles.summaryContent}>
               <Text variant="labelSmall">Total Borrowed</Text>
-              <Text variant="titleMedium" style={{ fontWeight: '700', color: theme.custom.borrowed }}>
+              <Text
+                variant="titleMedium"
+                style={{ fontWeight: '700', color: theme.custom.borrowed }}
+              >
                 {formatCurrency(debtSummary.totalBorrowed, symbol)}
               </Text>
             </Card.Content>
@@ -185,23 +197,41 @@ export default function DebtsScreen() {
           value={tab}
           onValueChange={(v) => setTab(v as 'lent' | 'borrowed')}
           buttons={[
-            { value: 'lent', label: `Lent (${allDebts.filter((d) => d.type === 'lent' && d.status !== 'settled').length})` },
-            { value: 'borrowed', label: `Borrowed (${allDebts.filter((d) => d.type === 'borrowed' && d.status !== 'settled').length})` },
+            {
+              value: 'lent',
+              label: `Lending (${groupedDebts.lent.filter((g) => !g.allSettled).length})`,
+            },
+            {
+              value: 'borrowed',
+              label: `Borrowing (${groupedDebts.borrowed.filter((g) => !g.allSettled).length})`,
+            },
           ]}
           style={styles.segment}
         />
       </View>
 
       <FlatList
-        data={filteredDebts}
-        keyExtractor={(item) => item.id.toString()}
-        renderItem={renderDebt}
+        data={data}
+        keyExtractor={(item) => `${item.type}-${item.contactId}`}
+        renderItem={renderGroup}
         ListEmptyComponent={
-          <EmptyState
-            icon="handshake"
-            title={`No ${tab} money records`}
-            subtitle={`Tap + to add money you've ${tab === 'lent' ? 'lent to' : 'borrowed from'} someone`}
-          />
+          <View>
+            <EmptyState
+              icon="handshake"
+              title={`No ${tab === 'lent' ? 'lending' : 'borrowing'} records`}
+              subtitle={`Tap + to add money you've ${tab === 'lent' ? 'lent to' : 'borrowed from'} someone`}
+            />
+            {!hasContacts && (
+              <View style={styles.importHint}>
+                <Text
+                  variant="bodySmall"
+                  style={{ color: theme.colors.outline, textAlign: 'center' }}
+                >
+                  You can search your phone contacts when adding a new debt
+                </Text>
+              </View>
+            )}
+          </View>
         }
         contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
@@ -209,7 +239,10 @@ export default function DebtsScreen() {
 
       <FAB
         icon="plus"
-        style={[styles.fab, { backgroundColor: theme.colors.primary, bottom: insets.bottom + 16 }]}
+        style={[
+          styles.fab,
+          { backgroundColor: theme.colors.primary, bottom: insets.bottom + 16 },
+        ]}
         color="white"
         onPress={() => router.push('/debt/add')}
       />
@@ -228,6 +261,7 @@ const styles = StyleSheet.create({
   debtCard: { borderRadius: 12 },
   debtHeader: { flexDirection: 'row', justifyContent: 'space-between' },
   debtInfo: { flex: 1, marginRight: 12 },
+  nameRow: { flexDirection: 'row', alignItems: 'center' },
   statusBadge: {
     marginTop: 4,
     borderRadius: 6,
@@ -244,11 +278,17 @@ const styles = StyleSheet.create({
   debtFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     marginTop: 8,
   },
   fab: {
     position: 'absolute',
     right: 16,
     borderRadius: 16,
+  },
+  importHint: {
+    alignItems: 'center',
+    paddingHorizontal: 32,
+    paddingBottom: 16,
   },
 });

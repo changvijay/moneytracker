@@ -6,6 +6,8 @@ import {
   RefreshControl,
   TouchableOpacity,
   Dimensions,
+    Modal as RNModal,
+
 } from 'react-native';
 import {
   Text,
@@ -17,6 +19,7 @@ import {
   Surface,
   Divider,
   ProgressBar,
+  IconButton
 } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -95,10 +98,11 @@ export default function DashboardScreen() {
   const savingsRate = useAppSelector(selectSavingsRate);
   const velocity = useAppSelector(selectSpendingVelocity);
   const categoryBreakdown = useAppSelector(selectExpenseByCategoryCurrentMonth);
-
   const symbol = settings?.currencySymbol ?? '$';
   const recentTransactions = transactions.slice(0, 5);
+  const allTransactions = useAppSelector((s) => s.transactions.items);
 
+  const lastTransactionDate = allTransactions[0]?.date ?? null;
   // Pie chart slices (top 5 + Others)
   const pieSlices = useMemo(() => {
     if (categoryBreakdown.length === 0) return [];
@@ -166,6 +170,14 @@ export default function DashboardScreen() {
     prevTotals.balance !== 0
       ? ((currentTotals.balance - prevTotals.balance) / Math.abs(prevTotals.balance)) * 100
       : 0;
+
+
+
+
+  const handleAdd = async (data: NewTransaction) => {
+      await dispatch(addTransaction(data));
+      setShowAddModal(false);
+    };
 
   return (
     <View style={[styles.flex, { backgroundColor: theme.colors.background }]}>
@@ -505,37 +517,104 @@ export default function DashboardScreen() {
       </ScrollView>
 
       {/* FAB */}
-      <FAB
-        icon="plus"
-        style={[styles.fab, { backgroundColor: theme.colors.primary, bottom: insets.bottom + 16 }]}
-        color="white"
-        onPress={() => setShowAddModal(true)}
-      />
+      
+            <FAB
+              icon="plus"
+              style={[
+                styles.fab, 
+                { 
+                  backgroundColor: theme.colors.primary,
+                  bottom: insets.bottom + 20,
+                  elevation: 8,
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowOpacity: 0.3,
+                  shadowRadius: 8,
+                }
+              ]}
+              color="white"
+              onPress={() => setShowAddModal(true)}
+              size="medium"
+              label="Add"
+            />
+      
 
       {/* Add Transaction Modal */}
-      <Portal>
-        <Modal
-          visible={showAddModal}
-          onDismiss={() => setShowAddModal(false)}
-          contentContainerStyle={[
-            styles.modal,
-            { backgroundColor: theme.colors.surface },
-          ]}
-        >
-          <Text variant="titleLarge" style={{ fontWeight: '700', marginBottom: 16, paddingHorizontal: 16 }}>
-            Add Transaction
-          </Text>
-          <TransactionForm
-            onSubmit={handleAddTransaction}
-            onCancel={() => setShowAddModal(false)}
-          />
-        </Modal>
-      </Portal>
+      
+            <RNModal
+              visible={showAddModal}
+              animationType="slide"
+              presentationStyle="pageSheet"
+              onRequestClose={() => setShowAddModal(false)}
+            >
+              <View
+                style={[
+                  styles.fullScreenModal,
+                  {
+                    backgroundColor: theme.colors.surface,
+                    paddingTop: insets.top,
+                    paddingBottom: insets.bottom,
+                  }
+                ]}
+              >
+                <View style={styles.modalContainer}>
+                  <View style={styles.modalHandle} />
+                  <View style={[styles.modalHeader, { borderBottomColor: theme.colors.outline + '20' }]}>
+                    <Text
+                      variant="titleMedium"
+                      style={{ fontWeight: '700', color: theme.colors.onSurface }}
+                    >
+                      Add Transaction
+                    </Text>
+                    <IconButton
+                      icon="close"
+                      size={20}
+                      onPress={() => setShowAddModal(false)}
+                      iconColor={theme.colors.onSurfaceVariant}
+                    />
+                  </View>
+                  <View style={styles.modalContent}>
+                    <TransactionForm
+                      initialData={lastTransactionDate ? { date: lastTransactionDate } : undefined}
+                      onSubmit={handleAdd}
+                      onCancel={() => setShowAddModal(false)}
+                    />
+                  </View>
+                </View>
+              </View>
+            </RNModal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  modalHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#D1D5DB',
+    alignSelf: 'center',
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  fullScreenModal: {
+    flex: 1,
+    margin: 0,
+    width: '100%',
+    height: '100%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+  },
+  modalContainer: {
+    flex: 1,
+    height: '100%',
+  },
   flex: { flex: 1 },
   header: { paddingHorizontal: 16, marginBottom: 12 },
   balanceCard: { marginHorizontal: 16, marginBottom: 16, borderRadius: 16 },
@@ -641,5 +720,8 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     maxHeight: '90%',
     paddingTop: 16,
+  },
+  modalContent: {
+    flex: 1,
   },
 });
